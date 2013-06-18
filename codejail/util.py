@@ -15,7 +15,7 @@ def temp_directory():
     temp_dir = tempfile.mkdtemp(prefix="codejail-")
     # Make directory readable by other users ('sandbox' user needs to be
     # able to read it).
-    os.chmod(temp_dir, 0775)
+    os.chmod(temp_dir, 0o775)
     try:
         yield temp_dir
     finally:

@@ -3,7 +3,10 @@ Test JSON serialization straw
 """
 
 import unittest
+import six
 from codejail.safe_exec import json_safe
+
+unichr_ = chr if six.PY3 else unichr
 
 
 class JsonSafeTest(unittest.TestCase):
@@ -18,7 +21,7 @@ class JsonSafeTest(unittest.TestCase):
         # Test that json_safe() handles non-surrogate unicode values.
 
         # Try a few non-ascii UTF-16 characters
-        for unicode_char in [unichr(512), unichr(2**8-1), unichr(2**16-1)]:
+        for unicode_char in [unichr_(512), unichr_(2**8-1), unichr_(2**16-1)]:
 
             # Try it as a dictionary value
             result = json_safe({'test': unicode_char})
@@ -33,7 +36,7 @@ class JsonSafeTest(unittest.TestCase):
 
         # Try surrogate unicode values
         for code in self.SURROGATE_RANGE:
-            unicode_char = unichr(code)
+            unicode_char = unichr_(code)
 
             # Try it as a dictionary value
             json_safe({'test': unicode_char})
@@ -46,7 +49,7 @@ class JsonSafeTest(unittest.TestCase):
 
         # Try surrogate unicode values
         for code in self.SURROGATE_RANGE:
-            unicode_char = unichr(code)
+            unicode_char = unichr_(code)
 
             # Try it is a dictionary key
             json_safe({unicode_char: 'test'})

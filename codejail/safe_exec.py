@@ -1,5 +1,7 @@
 """Safe execution of untrusted Python code."""
 
+import six
+
 import logging
 import os.path
 import shutil
@@ -150,10 +152,13 @@ def json_safe(d):
     Used to emulate reading data through a serialization straw.
 
     """
-    ok_types = (type(None), int, long, float, str, unicode, list, tuple, dict)
+    ok_types = (type(None), int, float, str, list, tuple, dict)
+    if not six.PY3:
+        ok_types += (long, unicode)
+
     bad_keys = ("__builtins__",)
     jd = {}
-    for k, v in d.iteritems():
+    for k, v in d.items():
         if not isinstance(v, ok_types):
             continue
         if k in bad_keys:
@@ -198,7 +203,7 @@ def not_safe_exec(code, globals_dict, files=None, python_path=None, slug=None):
             if python_path:
                 sys.path.extend(python_path)
             try:
-                exec code in g_dict
+                six.exec_(code, g_dict)
             except Exception as e:
                 # Wrap the exception in a SafeExecException, but we don't
                 # try here to include the traceback, since this is just a

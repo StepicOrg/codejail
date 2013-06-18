@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import six
 
 from .util import temp_directory
 
@@ -188,7 +189,17 @@ def jail_code(command, code=None, files=None, argv=None, stdin=None,
             killer.start()
 
         result = JailResult()
-        result.stdout, result.stderr = subproc.communicate(stdin)
+        if stdin and six.PY3:
+            encoded_stdin = bytes(stdin, encoding='utf-8')
+        else:
+            encoded_stdin = stdin
+
+        result.stdout, result.stderr = subproc.communicate(encoded_stdin)
+
+        if six.PY3:
+            result.stdout = result.stdout.decode('utf-8')
+            result.stderr = result.stderr.decode('utf-8')
+
         result.status = subproc.returncode
 
     return result
