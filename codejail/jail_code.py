@@ -189,7 +189,7 @@ def jail_code(command, code=None, files=None, argv=None, stdin=None,
             killer.start()
 
         result = JailResult()
-        if stdin and six.PY3:
+        if six.PY3 and isinstance(stdin, str):
             encoded_stdin = bytes(stdin, encoding='utf-8')
         else:
             encoded_stdin = stdin
