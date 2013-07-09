@@ -115,7 +115,7 @@ class JailResult(object):
 
 
 def jail_code(command, code=None, files=None, argv=None, stdin=None,
-              slug=None):
+              slug=None, env=None):
     """
     Run code in a jailed subprocess.
 
@@ -177,7 +177,7 @@ def jail_code(command, code=None, files=None, argv=None, stdin=None,
         cmd = COMMANDS[command] + argv
 
         subproc = subprocess.Popen(
-            cmd, preexec_fn=set_process_limits, cwd=tmpdir, env={},
+            cmd, preexec_fn=set_process_limits, cwd=tmpdir, env=env or {},
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
