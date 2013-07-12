@@ -99,12 +99,12 @@ def safe_exec(code, globals_dict, files=None, python_path=None, slug=None):
     the_code.append(textwrap.dedent(
         # Execute the sandboxed code.
         """
-        exec code in g_dict
+        exec(code, g_dict)
         """
         # Clean the globals for sending back as JSON over stdout.
         """
         ok_types = (
-            type(None), int, long, float, str, unicode, list, tuple, dict
+            type(None), int, float, str, list, tuple, dict
         )
         bad_keys = ("__builtins__",)
         def jsonable(v):
@@ -117,7 +117,7 @@ def safe_exec(code, globals_dict, files=None, python_path=None, slug=None):
             return True
         g_dict = {
             k:v
-            for k,v in g_dict.iteritems()
+            for k,v in g_dict.items()
             if jsonable(v) and k not in bad_keys
         }
         """
