@@ -38,7 +38,7 @@ class SafeExecException(Exception):
     pass
 
 
-def safe_exec(code, globals_dict, files=None, python_path=None, slug=None):
+def safe_exec(code, globals_dict, files=None, python_path=None, slug=None, env=None):
     """
     Execute code as "exec" does, but safely.
 
@@ -136,7 +136,7 @@ def safe_exec(code, globals_dict, files=None, python_path=None, slug=None):
         log.debug("Stdin: %s", stdin)
 
     res = jail_code.jail_code(
-        "python", code=jailed_code, stdin=stdin, files=files, slug=slug,
+        "python", code=jailed_code, stdin=stdin, files=files, slug=slug, env=env
     )
     if res.status != 0:
         raise SafeExecException(
