@@ -140,9 +140,9 @@ def safe_exec(code, globals_dict, files=None, python_path=None, slug=None, env=N
     )
     if res.status != 0:
         raise SafeExecException(
-            "Couldn't execute jailed code: %s" % res.stderr
+            "Couldn't execute jailed code: %s" % res.stderr.decode()
         )
-    globals_dict.update(json.loads(res.stdout))
+    globals_dict.update(json.loads(res.stdout.decode()))
 
 
 def json_safe(d):

@@ -190,15 +190,11 @@ def jail_code(command, code=None, files=None, argv=None, stdin=None,
 
         result = JailResult()
         if six.PY3 and isinstance(stdin, str):
-            encoded_stdin = bytes(stdin, encoding='utf-8')
+            encoded_stdin = stdin.encode()
         else:
             encoded_stdin = stdin
 
         result.stdout, result.stderr = subproc.communicate(encoded_stdin)
-
-        if six.PY3:
-            result.stdout = result.stdout.decode('utf-8')
-            result.stderr = result.stderr.decode('utf-8')
 
         result.status = subproc.returncode
 
