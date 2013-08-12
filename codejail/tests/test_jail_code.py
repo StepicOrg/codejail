@@ -1,7 +1,6 @@
 """Test jail_code.py"""
 
 import os
-import os.path
 import shutil
 import textwrap
 import tempfile
@@ -16,7 +15,12 @@ def jailpy(code=None, *args, **kwargs):
     """Run `jail_code` on Python."""
     if code:
         code = textwrap.dedent(code)
-    return jail_code("python", code, *args, **kwargs)
+    result = jail_code("python", code, *args, **kwargs)
+    if isinstance(result.stdout, bytes):
+        result.stdout = result.stdout.decode()
+    if isinstance(result.stderr, bytes):
+        result.stderr = result.stderr.decode()
+    return result
 
 
 def file_here(fname):
@@ -41,13 +45,13 @@ class TestFeatures(JailCodeHelpers, unittest.TestCase):
     """Test features of how `jail_code` runs Python."""
 
     def test_hello_world(self):
-        res = jailpy(code="print 'Hello, world!'")
+        res = jailpy(code="print('Hello, world!')")
         self.assertResultOk(res)
         self.assertEqual(res.stdout, 'Hello, world!\n')
 
     def test_argv(self):
         res = jailpy(
-            code="import sys; print ':'.join(sys.argv[1:])",
+            code="import sys; print(':'.join(sys.argv[1:]))",
             argv=["Hello", "world", "-x"]
         )
         self.assertResultOk(res)
@@ -66,7 +70,7 @@ class TestFeatures(JailCodeHelpers, unittest.TestCase):
 
     def test_stdin_is_provided(self):
         res = jailpy(
-            code="import json,sys; print sum(json.load(sys.stdin))",
+            code="import json,sys; print(sum(json.load(sys.stdin)))",
             stdin="[1, 2.5, 33]"
         )
         self.assertResultOk(res)
@@ -74,7 +78,7 @@ class TestFeatures(JailCodeHelpers, unittest.TestCase):
 
     def test_files_are_copied(self):
         res = jailpy(
-            code="print 'Look:', open('hello.txt').read()",
+            code="print('Look:', open('hello.txt').read())",
             files=[file_here("hello.txt")]
         )
         self.assertResultOk(res)
@@ -85,7 +89,7 @@ class TestFeatures(JailCodeHelpers, unittest.TestCase):
             code="""\
                 import os
                 for path, dirs, files in os.walk("."):
-                    print (path, sorted(dirs), sorted(files))
+                    print((path, sorted(dirs), sorted(files)))
                 """,
             files=[file_here("hello.txt"), file_here("pylib")]
         )
@@ -122,56 +126,56 @@ class TestLimits(JailCodeHelpers, unittest.TestCase):
     def test_cant_use_too_much_memory(self):
         # This will fail after setting the limit to 30Mb.
         set_limit('VMEM', 30000000)
-        res = jailpy(code="print len(bytearray(50000000))")
+        res = jailpy(code="print(len(bytearray(50000000)))")
         self.assertEqual(res.stdout, "")
         self.assertNotEqual(res.status, 0)
 
     def test_changing_vmem_limit(self):
         # Up the limit, it will succeed.
         set_limit('VMEM', 60000000)
-        res = jailpy(code="print len(bytearray(50000000))")
+        res = jailpy(code="print(len(bytearray(50000000)))")
         self.assertEqual(res.stdout, "50000000\n")
         self.assertEqual(res.status, 0)
 
     def test_disabling_vmem_limit(self):
         # Disable the limit, it will succeed.
         set_limit('VMEM', 0)
-        res = jailpy(code="print len(bytearray(50000000))")
+        res = jailpy(code="print(len(bytearray(50000000)))")
         self.assertEqual(res.stdout, "50000000\n")
         self.assertEqual(res.status, 0)
 
     def test_cant_use_too_much_cpu(self):
-        res = jailpy(code="print sum(xrange(100000000))")
+        res = jailpy(code="print(sum(xrange(100000000)))")
         self.assertEqual(res.stdout, "")
         self.assertNotEqual(res.status, 0)
 
     def test_cant_use_too_much_time(self):
         # Default time limit is 1 second.  Sleep for 1.5 seconds.
-        res = jailpy(code="import time; time.sleep(1.5); print 'Done!'")
+        res = jailpy(code="import time; time.sleep(1.5); print('Done!')")
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "")
 
     def test_changing_realtime_limit(self):
         # Change time limit to 2 seconds, sleeping for 1.5 will be fine.
         set_limit('REALTIME', 2)
-        res = jailpy(code="import time; time.sleep(1.5); print 'Done!'")
+        res = jailpy(code="import time; time.sleep(1.5); print('Done!')")
         self.assertResultOk(res)
         self.assertEqual(res.stdout, "Done!\n")
 
     def test_disabling_realtime_limit(self):
         # Disable the time limit, sleeping for 1.5 will be fine.
         set_limit('REALTIME', 0)
-        res = jailpy(code="import time; time.sleep(1.5); print 'Done!'")
+        res = jailpy(code="import time; time.sleep(1.5); print('Done!')")
         self.assertResultOk(res)
         self.assertEqual(res.stdout, "Done!\n")
 
     def test_cant_write_files(self):
         res = jailpy(code="""\
-                print "Trying"
+                print("Trying")
                 with open("mydata.txt", "w") as f:
                     f.write("hello")
                 with open("mydata.txt") as f2:
-                    print "Got this:", f2.read()
+                    print("Got this:", f2.read())
                 """)
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "Trying\n")
@@ -179,11 +183,11 @@ class TestLimits(JailCodeHelpers, unittest.TestCase):
 
     def test_cant_use_network(self):
         res = jailpy(code="""\
-                import urllib
-                print "Reading google"
+                import(urllib)
+                print("Reading google")
                 u = urllib.urlopen("http://google.com")
                 google = u.read()
-                print len(google)
+                print(len(google))
                 """)
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "Reading google\n")
@@ -192,7 +196,7 @@ class TestLimits(JailCodeHelpers, unittest.TestCase):
     def test_cant_fork(self):
         res = jailpy(code="""\
                 import os
-                print "Forking"
+                print("Forking")
                 child_ppid = os.fork()
                 """)
         self.assertNotEqual(res.status, 0)
@@ -204,19 +208,19 @@ class TestLimits(JailCodeHelpers, unittest.TestCase):
         res = jailpy(code="""\
                 import os
                 for name, value in os.environ.items():
-                    print "%s: %r" % (name, value)
+                    print("%s: %r" % (name, value))
                 """)
         self.assertResultOk(res)
         self.assertNotIn("HONEY", res.stdout)
 
     def test_reading_dev_random(self):
         # We can read 10 bytes just fine.
-        res = jailpy(code="x = open('/dev/random').read(10); print len(x)")
+        res = jailpy(code="x = open('/dev/random').read(10); print(len(x))")
         self.assertResultOk(res)
         self.assertEqual(res.stdout, "10\n")
 
         # If we try to read all of it, we'll be killed by the real-time limit.
-        res = jailpy(code="x = open('/dev/random').read(); print 'Done!'")
+        res = jailpy(code="x = open('/dev/random').read(); print('Done!')")
         self.assertNotEqual(res.status, 0)
 
 
@@ -252,9 +256,9 @@ class TestSymlinks(JailCodeHelpers, unittest.TestCase):
         # the symlink.
         res = jailpy(
             code="""\
-                print open('copied/here.txt').read()        # can read
-                print open('copied/herelink.txt').read()    # can read
-                print open('copied/link.txt').read()        # can't read
+                print(open('copied/here.txt').read())        # can read
+                print(open('copied/herelink.txt').read())    # can read
+                print(open('copied/link.txt').read())        # can't read
                 """,
             files=[self.copied],
         )
@@ -265,9 +269,9 @@ class TestSymlinks(JailCodeHelpers, unittest.TestCase):
         # Run some code in the sandbox, with a copied file which is a symlink.
         res = jailpy(
             code="""\
-                print open('here.txt').read()       # can read
-                print open('herelink.txt').read()   # can read
-                print open('link.txt').read()       # can't read
+                print(open('here.txt').read())       # can read
+                print(open('herelink.txt').read())   # can read
+                print(open('link.txt').read())       # can't read
                 """,
             files=[self.here_txt, self.herelink_txt, self.link_txt],
         )
@@ -284,10 +288,10 @@ class TestMalware(JailCodeHelpers, unittest.TestCase):
             import new, sys
             bad_code = new.code(0,0,0,0,"KABOOM",(),(),(),"","",0,"")
             crash_me = new.function(bad_code, {})
-            print "Here we go..."
+            print("Here we go...")
             sys.stdout.flush()
             crash_me()
-            print "The afterlife!"
+            print("The afterlife!")
             """)
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "Here we go...\n")
@@ -296,7 +300,7 @@ class TestMalware(JailCodeHelpers, unittest.TestCase):
     def test_read_etc_passwd(self):
         res = jailpy(code="""\
             bytes = len(open('/etc/passwd').read())
-            print 'Gotcha', bytes
+            print('Gotcha', bytes)
             """)
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "")
@@ -315,8 +319,8 @@ class TestMalware(JailCodeHelpers, unittest.TestCase):
                     # darn
                     pass
                 else:
-                    print "Files in %r: %r" % (place, files)
-            print "Done."
+                    print("Files in %r: %r" % (place, files))
+            print("Done.")
             """)
         self.assertResultOk(res)
         self.assertEqual(res.stdout, "Done.\n")
