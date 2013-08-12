@@ -285,17 +285,17 @@ class TestMalware(JailCodeHelpers, unittest.TestCase):
     def test_crash_cpython(self):
         # http://nedbatchelder.com/blog/201206/eval_really_is_dangerous.html
         res = jailpy(code="""\
-            import new, sys
-            bad_code = new.code(0,0,0,0,"KABOOM",(),(),(),"","",0,"")
-            crash_me = new.function(bad_code, {})
+            import types, sys
+            bad_code = types.CodeType(0,0,0,0,0,b"KABOOM",(),(),(),"","",0,b"")
+            crash_me = types.FunctionType(bad_code, {})
             print("Here we go...")
             sys.stdout.flush()
             crash_me()
             print("The afterlife!")
             """)
         self.assertNotEqual(res.status, 0)
-        self.assertEqual(res.stdout, "Here we go...\n")
         self.assertEqual(res.stderr, "")
+        self.assertEqual(res.stdout, "Here we go...\n")
 
     def test_read_etc_passwd(self):
         res = jailpy(code="""\
