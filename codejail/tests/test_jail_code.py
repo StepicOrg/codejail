@@ -132,7 +132,7 @@ class TestLimits(JailCodeHelpers, unittest.TestCase):
 
     def test_changing_vmem_limit(self):
         # Up the limit, it will succeed.
-        set_limit('VMEM', 60000000)
+        set_limit('VMEM', 80000000)
         res = jailpy(code="print(len(bytearray(50000000)))")
         self.assertEqual(res.stdout, "50000000\n")
         self.assertEqual(res.status, 0)
@@ -183,15 +183,15 @@ class TestLimits(JailCodeHelpers, unittest.TestCase):
 
     def test_cant_use_network(self):
         res = jailpy(code="""\
-                import(urllib)
+                import urllib.request
                 print("Reading google")
-                u = urllib.urlopen("http://google.com")
+                u = urllib.request.urlopen("http://google.com")
                 google = u.read()
                 print(len(google))
                 """)
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "Reading google\n")
-        self.assertIn("IOError", res.stderr)
+        self.assertIn("URLError", res.stderr)
 
     def test_cant_fork(self):
         res = jailpy(code="""\
@@ -215,7 +215,7 @@ class TestLimits(JailCodeHelpers, unittest.TestCase):
 
     def test_reading_dev_random(self):
         # We can read 10 bytes just fine.
-        res = jailpy(code="x = open('/dev/random').read(10); print(len(x))")
+        res = jailpy(code="x = open('/dev/random', 'rb').read(10); print(len(x))")
         self.assertResultOk(res)
         self.assertEqual(res.stdout, "10\n")
 
