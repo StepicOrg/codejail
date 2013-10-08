@@ -1,21 +1,48 @@
 """Run code in a jail."""
-
 import logging
 import os
-import os.path
 import resource
 import shutil
 import subprocess
 import sys
 import threading
 import time
-import six
 
 from .util import temp_directory
 
 log = logging.getLogger(__name__)
 
 # TODO: limit too much stdout data?
+
+DEFAULT_LIMITS = {
+    # CPU seconds, defaulting to 1.
+    "CPU": 2,
+    # Real time, defaulting to 1 second.
+    "REALTIME": 2,
+    # Total process virutal memory, in bytes, defaulting to unlimited.
+    "VMEM": 0,
+}
+
+
+def unite_limits(limit1, limit2):
+    def extract(val):
+        return [l[val] for l in [limit1, limit2] if val in l]
+    cpus = extract('CPU')
+    realtimes = extract('REALTIME')
+    vmems = extract('VMEM')
+    new_limits = {
+        'CPU': min(cpus),
+        'REALTIME': min(realtimes),
+        'VMEM': min(vmems) if 0 not in vmems else max(vmems)
+    }
+    return new_limits
+
+
+class Command(object):
+    def __init__(self, name, argv, limits):
+        self.name = name
+        self.argv = argv
+        self.limits = limits
 
 # Configure the commands
 
@@ -24,7 +51,7 @@ log = logging.getLogger(__name__)
 COMMANDS = {}
 
 
-def configure(command, bin_path, user=None):
+def configure(command, bin_path, user=None, extra_args=None, limits=None):
     """
     Configure a command for `jail_code` to use.
 
@@ -33,22 +60,23 @@ def configure(command, bin_path, user=None):
     the user name to run the command under.
 
     """
-    cmd_argv = []
+    extra_args = extra_args or []
+    limits = limits or dict(DEFAULT_LIMITS)
+    if "python" in command:
+        # -E means ignore the environment variables PYTHON*
+        # -B means don't try to write .pyc files.
+        extra_args.extend(['-E', '-B'])
 
+    cmd_argv = []
     if user:
         # Run as the specified user
         cmd_argv.extend(['sudo', '-u', user])
 
     # Run the command!
     cmd_argv.append(bin_path)
+    cmd_argv.extend(extra_args)
 
-    # Command-specific arguments
-    if command == "python":
-        # -E means ignore the environment variables PYTHON*
-        # -B means don't try to write .pyc files.
-        cmd_argv.extend(['-E', '-B'])
-
-    COMMANDS[command] = cmd_argv
+    COMMANDS[command] = Command(command, cmd_argv, limits)
 
 
 def is_configured(command):
@@ -68,54 +96,17 @@ if hasattr(sys, 'real_prefix'):
         configure("python", sys.prefix + "-sandbox/bin/python", "sandbox")
 
 
-# Configurable limits
-
-LIMITS = {
-    # CPU seconds, defaulting to 1.
-    "CPU": 1,
-    # Real time, defaulting to 1 second.
-    "REALTIME": 1,
-    # Total process virutal memory, in bytes, defaulting to unlimited.
-    "VMEM": 0,
-}
-
-
-def set_limit(limit_name, value):
-    """
-    Set a limit for `jail_code`.
-
-    `limit_name` is a string, the name of the limit to set. `value` is the
-    value to use for that limit.  The type, meaning, default, and range of
-    accepted values depend on `limit_name`.
-
-    These limits are available:
-
-        * `"CPU"`: the maximum number of CPU seconds the jailed code can use.
-            The value is an integer, defaulting to 1.
-
-        * `"REALTIME"`: the maximum number of seconds the jailed code can run,
-            in real time.  The default is 1 second.
-
-        * `"VMEM"`: the total virtual memory available to the jailed code, in
-            bytes.  The default is 0 (no memory limit).
-
-    Limits are process-wide, and will affect all future calls to jail_code.
-    Providing a limit of 0 will disable that limit.
-
-    """
-    LIMITS[limit_name] = value
-
-
 class JailResult(object):
     """
     A passive object for us to return from jail_code.
     """
+
     def __init__(self):
         self.stdout = self.stderr = self.status = None
 
 
-def jail_code(command, code=None, files=None, argv=None, stdin=None,
-              slug=None, env=None):
+def jail_code(command, code=None, files=None, command_argv=None, argv=None, stdin=None,
+              slug=None, env=None, limits=None):
     """
     Run code in a jailed subprocess.
 
@@ -147,49 +138,83 @@ def jail_code(command, code=None, files=None, argv=None, stdin=None,
         .status: exit status of the process: an int, 0 for success
 
     """
+    files = files or []
+    command_argv = command_argv or []
+    argv = argv or []
+    env = env or {}
     if not is_configured(command):
         raise Exception("jail_code needs to be configured for %r" % command)
+    command = COMMANDS[command]
+    limits = unite_limits(command.limits, limits or {})
+
+    def set_process_limits():
+        # No subprocesses or files.
+        resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
+
+        # CPU seconds, not wall clock time.
+        cpu = limits["CPU"]
+        if cpu:
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+
+        # Total process virtual memory.
+        vmem = limits["VMEM"]
+        if vmem:
+            resource.setrlimit(resource.RLIMIT_AS, (vmem, vmem))
 
     with temp_directory() as tmpdir:
 
         if slug:
             log.warning("Executing jailed code %s in %s", slug, tmpdir)
 
-        argv = argv or []
-
         # All the supporting files are copied into our directory.
-        for filename in files or ():
-            dest = os.path.join(tmpdir, os.path.basename(filename))
-            if os.path.islink(filename):
-                os.symlink(os.readlink(filename), dest)
-            elif os.path.isfile(filename):
-                shutil.copy(filename, tmpdir)
+        for element in files:
+            if isinstance(element, str):
+                filename = element
+                dest = os.path.join(tmpdir, os.path.basename(filename))
+                if os.path.islink(filename):
+                    os.symlink(os.readlink(filename), dest)
+                elif os.path.isfile(filename):
+                    shutil.copy(filename, tmpdir)
+                else:
+                    shutil.copytree(filename, dest, symlinks=True)
             else:
-                shutil.copytree(filename, dest, symlinks=True)
+                file_content, filename = element
+                dest = os.path.join(tmpdir, os.path.basename(filename))
+                with open(dest, 'w') as f:
+                    f.write(file_content)
 
         # Create the main file.
         if code:
             with open(os.path.join(tmpdir, "jailed_code"), "w") as jailed:
                 jailed.write(code)
 
-            argv = ["jailed_code"] + argv
+            command_argv = command_argv + ["jailed_code"]
 
-        cmd = COMMANDS[command] + argv
+        cmd = command.argv + command_argv + argv
 
-        subproc = subprocess.Popen(
-            cmd, preexec_fn=set_process_limits, cwd=tmpdir, env=env or {},
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        )
+        popen_kwargs = dict(cwd=tmpdir,
+                            env=env,
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            start_new_session=True,
+                            preexec_fn=set_process_limits)
+
+        if sys.platform == "win32":
+            popen_kwargs.update(preexec_fn=None,
+                                start_new_session=False)
+
+        subproc = subprocess.Popen(cmd, **popen_kwargs)
 
         # Start the time killer thread.
-        realtime = LIMITS["REALTIME"]
+        realtime = limits["REALTIME"]
         if realtime:
             killer = ProcessKillerThread(subproc, limit=realtime)
             killer.start()
 
         result = JailResult()
-        if six.PY3 and isinstance(stdin, str):
+        if isinstance(stdin, str):
             encoded_stdin = stdin.encode()
         else:
             encoded_stdin = stdin
@@ -201,33 +226,11 @@ def jail_code(command, code=None, files=None, argv=None, stdin=None,
     return result
 
 
-def set_process_limits():       # pragma: no cover
-    """
-    Set limits on this processs, to be used first in a child process.
-    """
-    # Set a new session id so that this process and all its children will be
-    # in a new process group, so we can kill them all later if we need to.
-    os.setsid()
-
-    # No subprocesses or files.
-    resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
-
-    # CPU seconds, not wall clock time.
-    cpu = LIMITS["CPU"]
-    if cpu:
-        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
-
-    # Total process virtual memory.
-    vmem = LIMITS["VMEM"]
-    if vmem:
-        resource.setrlimit(resource.RLIMIT_AS, (vmem, vmem))
-
-
 class ProcessKillerThread(threading.Thread):
     """
     A thread to kill a process after a given time limit.
     """
+
     def __init__(self, subproc, limit):
         super(ProcessKillerThread, self).__init__()
         self.subproc = subproc
@@ -246,6 +249,6 @@ class ProcessKillerThread(threading.Thread):
             pgid = os.getpgid(self.subproc.pid)
             log.warning(
                 "Killing process %r (group %r), ran too long: %.1fs",
-                self.subproc.pid, pgid, time.time()-start
+                self.subproc.pid, pgid, time.time() - start
             )
             subprocess.call(["sudo", "pkill", "-9", "-g", str(pgid)])

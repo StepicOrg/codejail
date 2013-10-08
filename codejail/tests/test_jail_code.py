@@ -8,7 +8,7 @@ import unittest
 
 from nose.plugins.skip import SkipTest
 
-from codejail.jail_code import jail_code, is_configured, set_limit, LIMITS
+from codejail.jail_code import jail_code, is_configured
 
 
 def jailpy(code=None, *args, **kwargs):
@@ -113,57 +113,41 @@ class TestFeatures(JailCodeHelpers, unittest.TestCase):
 class TestLimits(JailCodeHelpers, unittest.TestCase):
     """Tests of the resource limits, and changing them."""
 
-    def setUp(self):
-        super(TestLimits, self).setUp()
-        self.old_limits = dict(LIMITS)
-
-    def tearDown(self):
-        for name, value in self.old_limits.items():
-            set_limit(name, value)
-        super(TestLimits, self).tearDown()
-
     def test_cant_use_too_much_memory(self):
         # This will fail after setting the limit to 30Mb.
-        set_limit('VMEM', 30000000)
-        res = jailpy(code="print(len(bytearray(50000000)))")
+        res = jailpy(code="print(len(bytearray(50000000)))", limits={'VMEM': 30000000})
         self.assertEqual(res.stdout, "")
         self.assertNotEqual(res.status, 0)
 
     def test_changing_vmem_limit(self):
         # Up the limit, it will succeed.
-        set_limit('VMEM', 80000000)
-        res = jailpy(code="print(len(bytearray(50000000)))")
+        res = jailpy(code="print(len(bytearray(50000000)))", limits={'VMEM': 80000000})
         self.assertEqual(res.stdout, "50000000\n")
         self.assertEqual(res.status, 0)
 
     def test_disabling_vmem_limit(self):
         # Disable the limit, it will succeed.
-        set_limit('VMEM', 0)
-        res = jailpy(code="print(len(bytearray(50000000)))")
+        res = jailpy(code="print(len(bytearray(50000000)))", limits={'VMEM': 0})
         self.assertEqual(res.stdout, "50000000\n")
         self.assertEqual(res.status, 0)
 
     def test_cant_use_too_much_cpu(self):
-        res = jailpy(code="print(sum(xrange(100000000)))")
+        res = jailpy(code="print(sum(range(10**9)))")
         self.assertEqual(res.stdout, "")
         self.assertNotEqual(res.status, 0)
 
     def test_cant_use_too_much_time(self):
-        # Default time limit is 1 second.  Sleep for 1.5 seconds.
-        res = jailpy(code="import time; time.sleep(1.5); print('Done!')")
+        # Default time limit is 1 second.  Sleep for 2.5 seconds.
+        res = jailpy(code="import time; time.sleep(2.5); print('Done!')")
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "")
 
     def test_changing_realtime_limit(self):
-        # Change time limit to 2 seconds, sleeping for 1.5 will be fine.
-        set_limit('REALTIME', 2)
-        res = jailpy(code="import time; time.sleep(1.5); print('Done!')")
-        self.assertResultOk(res)
-        self.assertEqual(res.stdout, "Done!\n")
+        res = jailpy(code="import time; time.sleep(1.5); print('Done!')", limits={'REALTIME': 1})
+        self.assertNotEqual(res.status, 0)
+        self.assertEqual(res.stdout, "")
 
     def test_disabling_realtime_limit(self):
-        # Disable the time limit, sleeping for 1.5 will be fine.
-        set_limit('REALTIME', 0)
         res = jailpy(code="import time; time.sleep(1.5); print('Done!')")
         self.assertResultOk(res)
         self.assertEqual(res.stdout, "Done!\n")
