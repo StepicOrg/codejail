@@ -1,7 +1,6 @@
 """Run code in a jail."""
 import logging
 import os
-import resource
 import shutil
 import subprocess
 import sys
@@ -148,6 +147,8 @@ def jail_code(command, code=None, files=None, command_argv=None, argv=None, stdi
     limits = unite_limits(command.limits, limits or {})
 
     def set_process_limits():
+        import resource  # available only on Unix
+
         # No subprocesses or files.
         resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
         resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
