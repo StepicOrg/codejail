@@ -2,13 +2,14 @@
 
 import os
 import shutil
+import sys
 import textwrap
 import tempfile
 import unittest
 
 from nose.plugins.skip import SkipTest
 
-from codejail.jail_code import jail_code, is_configured
+from codejail.jail_code import jail_code, is_configured, Jail, configure
 
 
 def jailpy(code=None, *args, **kwargs):
@@ -28,8 +29,9 @@ def file_here(fname):
     return os.path.join(os.path.dirname(__file__), fname)
 
 
-class JailCodeHelpers(object):
+class JailCodeHelpers(unittest.TestCase):
     """Assert helpers for jail_code tests."""
+
     def setUp(self):
         super(JailCodeHelpers, self).setUp()
         if not is_configured("python"):
@@ -37,11 +39,11 @@ class JailCodeHelpers(object):
 
     def assertResultOk(self, res):
         """Assert that `res` exited well (0), and had no stderr output."""
-        self.assertEqual(res.stderr, "")        # pylint: disable=E1101
-        self.assertEqual(res.status, 0)         # pylint: disable=E1101
+        self.assertEqual(res.stderr, "")
+        self.assertEqual(res.status, 0)
 
 
-class TestFeatures(JailCodeHelpers, unittest.TestCase):
+class TestFeatures(JailCodeHelpers):
     """Test features of how `jail_code` runs Python."""
 
     def test_hello_world(self):
@@ -109,8 +111,27 @@ class TestFeatures(JailCodeHelpers, unittest.TestCase):
             "This is doit.py!\nMy args are ['doit.py', '1', '2', '3']\n"
         )
 
+    def test_context_managers(self):
+        first = textwrap.dedent("""
+            with open("hello.txt", "w") as f:
+                f.write("Hello, second")
+        """)
+        second = textwrap.dedent("""
+            with open("hello.txt") as f:
+                print(f.read())
+        """)
 
-class TestLimits(JailCodeHelpers, unittest.TestCase):
+        limits = {"FORK": True, "FSIZE": 256}
+        configure("unconfined_python", sys.prefix + "/bin/python", limits=limits)
+        with Jail() as j:
+            res = j.run_code("unconfined_python", first)
+            self.assertEqual(res.status, 0)
+            res = j.run_code("python", second)
+        self.assertEqual(res.status, 0)
+        self.assertEqual(res.stdout.decode().strip(), "Hello, second")
+
+
+class TestLimits(JailCodeHelpers):
     """Tests of the resource limits, and changing them."""
 
     def test_cant_use_too_much_memory(self):
@@ -207,7 +228,7 @@ class TestLimits(JailCodeHelpers, unittest.TestCase):
         self.assertNotEqual(res.status, 0)
 
 
-class TestSymlinks(JailCodeHelpers, unittest.TestCase):
+class TestSymlinks(JailCodeHelpers):
     """Testing symlink behavior."""
 
     def setUp(self):
@@ -262,7 +283,7 @@ class TestSymlinks(JailCodeHelpers, unittest.TestCase):
         self.assertIn("ermission denied", res.stderr)
 
 
-class TestMalware(JailCodeHelpers, unittest.TestCase):
+class TestMalware(JailCodeHelpers):
     """Tests that attempt actual malware against the interpreter or system."""
 
     def test_crash_cpython(self):

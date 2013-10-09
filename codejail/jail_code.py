@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 
-from .util import temp_directory
+from . import util
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +20,8 @@ DEFAULT_LIMITS = {
     "REALTIME": 2,
     # Total process virutal memory, in bytes, defaulting to unlimited.
     "VMEM": 0,
+    "FORK": 0,
+    "FSIZE": 0
 }
 
 
@@ -29,10 +31,14 @@ def unite_limits(limit1, limit2):
     cpus = extract('CPU')
     realtimes = extract('REALTIME')
     vmems = extract('VMEM')
+    forks = extract('FORK')
+    fsizes = extract('FSIZE')
     new_limits = {
         'CPU': min(cpus),
         'REALTIME': min(realtimes),
-        'VMEM': min(vmems) if 0 not in vmems else max(vmems)
+        'VMEM': min(vmems) if 0 not in vmems else max(vmems),
+        'FORK': min(forks),
+        'FSIZE': min(fsizes)
     }
     return new_limits
 
@@ -60,7 +66,10 @@ def configure(command, bin_path, user=None, extra_args=None, limits=None):
 
     """
     extra_args = extra_args or []
-    limits = limits or dict(DEFAULT_LIMITS)
+    limits = limits or {}
+    for k, v in DEFAULT_LIMITS.items():
+        if k not in limits:
+            limits[k] = v
     if "python" in command:
         # -E means ignore the environment variables PYTHON*
         # -B means don't try to write .pyc files.
@@ -104,127 +113,140 @@ class JailResult(object):
         self.stdout = self.stderr = self.status = None
 
 
-def jail_code(command, code=None, files=None, command_argv=None, argv=None, stdin=None,
-              slug=None, env=None, limits=None):
-    """
-    Run code in a jailed subprocess.
+class Jail(object):
+    def __init__(self):
+        self.tmpdir = None
+        self.tmpdir_context_manager = util.temp_directory()
 
-    `command` is an abstract command ("python", "node", ...) that must have
-    been configured using `configure`.
+    def __enter__(self):
+        self.tmpdir = self.tmpdir_context_manager.__enter__()
+        return self
 
-    `code` is a string containing the code to run.  If no code is supplied,
-    then the code to run must be in one of the `files` copied, and must be
-    named in the `argv` list.
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.tmpdir_context_manager.__exit__(exc_type, exc_val, exc_tb)
 
-    `files` is a list of file paths, they are all copied to the jailed
-    directory.  Note that no check is made here that the files don't contain
-    sensitive information.  The caller must somehow determine whether to allow
-    the code access to the files.  Symlinks will be copied as symlinks.  If the
-    linked-to file is not accessible to the sandbox, the symlink will be
-    unreadable as well.
+    def run_code(self, command, code=None, files=None, command_argv=None, argv=None, stdin=None,
+                 slug=None, env=None, limits=None):
+        """
+        Run code in a jailed subprocess.
 
-    `argv` is the command-line arguments to supply.
+        `command` is an abstract command ("python", "node", ...) that must have
+        been configured using `configure`.
 
-    `stdin` is a string, the data to provide as the stdin for the process.
+        `code` is a string containing the code to run.  If no code is supplied,
+        then the code to run must be in one of the `files` copied, and must be
+        named in the `argv` list.
 
-    `slug` is an arbitrary string, a description that's meaningful to the
-    caller, that will be used in log messages.
+        `files` is a list of file paths, they are all copied to the jailed
+        directory.  Note that no check is made here that the files don't contain
+        sensitive information.  The caller must somehow determine whether to allow
+        the code access to the files.  Symlinks will be copied as symlinks.  If the
+        linked-to file is not accessible to the sandbox, the symlink will be
+        unreadable as well.
 
-    Return an object with:
+        `argv` is the command-line arguments to supply.
 
-        .stdout: stdout of the program, a string
-        .stderr: stderr of the program, a string
-        .status: exit status of the process: an int, 0 for success
+        `stdin` is a string, the data to provide as the stdin for the process.
 
-    """
-    files = files or []
-    command_argv = command_argv or []
-    argv = argv or []
-    env = env or {}
-    if not is_configured(command):
-        raise Exception("jail_code needs to be configured for %r" % command)
-    command = COMMANDS[command]
-    limits = unite_limits(command.limits, limits or {})
+        `slug` is an arbitrary string, a description that's meaningful to the
+        caller, that will be used in log messages.
 
-    def set_process_limits():
-        import resource  # available only on Unix
+        Return an object with:
 
-        # No subprocesses or files.
-        resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
+            .stdout: stdout of the program, a string
+            .stderr: stderr of the program, a string
+            .status: exit status of the process: an int, 0 for success
 
-        # CPU seconds, not wall clock time.
-        cpu = limits["CPU"]
-        if cpu:
-            resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+        """
+        files = files or []
+        command_argv = command_argv or []
+        argv = argv or []
+        env = env or {}
+        if isinstance(stdin, str):
+            stdin = stdin.encode()
 
-        # Total process virtual memory.
-        vmem = limits["VMEM"]
-        if vmem:
-            resource.setrlimit(resource.RLIMIT_AS, (vmem, vmem))
+        if not is_configured(command):
+            raise Exception("jail_code needs to be configured for %r" % command)
+        command = COMMANDS[command]
+        limits = unite_limits(command.limits, limits or {})
 
-    with temp_directory() as tmpdir:
+        def set_process_limits():
+            import resource  # available only on Unix
+            if not limits["FORK"]:
+                resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+            fsize = limits["FSIZE"]
+            resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
+            # CPU seconds, not wall clock time.
+            cpu = limits["CPU"]
+            if cpu:
+                resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+            # Total process virtual memory.
+            vmem = limits["VMEM"]
+            if vmem:
+                resource.setrlimit(resource.RLIMIT_AS, (vmem, vmem))
 
         if slug:
-            log.warning("Executing jailed code %s in %s", slug, tmpdir)
-
-        # All the supporting files are copied into our directory.
-        for element in files:
-            if isinstance(element, str):
-                filename = element
-                dest = os.path.join(tmpdir, os.path.basename(filename))
-                if os.path.islink(filename):
-                    os.symlink(os.readlink(filename), dest)
-                elif os.path.isfile(filename):
-                    shutil.copy(filename, tmpdir)
-                else:
-                    shutil.copytree(filename, dest, symlinks=True)
-            else:
-                file_content, filename = element
-                dest = os.path.join(tmpdir, os.path.basename(filename))
-                with open(dest, 'w') as f:
-                    f.write(file_content)
+            log.warning("Executing jailed code %s in %s", slug, self.tmpdir)
 
         # Create the main file.
         if code:
-            with open(os.path.join(tmpdir, "jailed_code"), "w") as jailed:
-                jailed.write(code)
-
+            files.append((code, "jailed_code"))
             command_argv = command_argv + ["jailed_code"]
 
-        cmd = command.argv + command_argv + argv
+        # All the supporting files are copied into our directory.
+        self.write_files(files)
 
-        popen_kwargs = dict(cwd=tmpdir,
+        cmd = command.argv + command_argv + argv
+        popen_kwargs = dict(cwd=self.tmpdir,
                             env=env,
                             stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             start_new_session=True,
                             preexec_fn=set_process_limits)
-
         if sys.platform == "win32":
             popen_kwargs.update(preexec_fn=None,
                                 start_new_session=False)
 
+        result = self.do_popen(cmd, stdin, limits["REALTIME"], popen_kwargs)
+        return result
+
+    @staticmethod
+    def do_popen(cmd, stdin, time_limit, popen_kwargs):
         subproc = subprocess.Popen(cmd, **popen_kwargs)
-
         # Start the time killer thread.
-        realtime = limits["REALTIME"]
-        if realtime:
-            killer = ProcessKillerThread(subproc, limit=realtime)
+        if time_limit:
+            killer = ProcessKillerThread(subproc, limit=time_limit)
             killer.start()
-
         result = JailResult()
-        if isinstance(stdin, str):
-            encoded_stdin = stdin.encode()
-        else:
-            encoded_stdin = stdin
-
-        result.stdout, result.stderr = subproc.communicate(encoded_stdin)
-
+        result.stdout, result.stderr = subproc.communicate(stdin)
         result.status = subproc.returncode
 
-    return result
+        return result
+
+    def write_files(self, files):
+        for element in files:
+            if isinstance(element, str):
+                filename = element
+                dest = os.path.join(self.tmpdir, os.path.basename(filename))
+                if os.path.islink(filename):
+                    os.symlink(os.readlink(filename), dest)
+                elif os.path.isfile(filename):
+                    shutil.copy(filename, self.tmpdir)
+                else:
+                    shutil.copytree(filename, dest, symlinks=True)
+            else:
+                file_content, filename = element
+                dest = os.path.join(self.tmpdir, os.path.basename(filename))
+                with open(dest, 'w') as f:
+                    f.write(file_content)
+
+
+def jail_code(command, code=None, files=None, command_argv=None, argv=None, stdin=None,
+              slug=None, env=None, limits=None):
+    with Jail() as jail:
+        return jail.run_code(command, code, files, command_argv, argv, stdin,
+                             slug, env, limits)
 
 
 class ProcessKillerThread(threading.Thread):
