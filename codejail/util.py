@@ -7,12 +7,12 @@ import tempfile
 
 
 @contextlib.contextmanager
-def temp_directory():
+def temp_directory(tmp_root=None):
     """
     A context manager to make and use a temp directory.
     The directory will be removed when done.
     """
-    temp_dir = tempfile.mkdtemp(prefix="codejail-")
+    temp_dir = tempfile.mkdtemp(prefix="codejail-", dir=tmp_root)
     # Make directory readable by other users ('sandbox' user needs to be
     # able to read it).
     os.chmod(temp_dir, 0o775)

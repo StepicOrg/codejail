@@ -114,9 +114,9 @@ class JailResult(object):
 
 
 class Jail(object):
-    def __init__(self):
+    def __init__(self, tmp_root=None):
         self.tmpdir = None
-        self.tmpdir_context_manager = util.temp_directory()
+        self.tmpdir_context_manager = util.temp_directory(tmp_root=tmp_root)
 
     def __enter__(self):
         self.tmpdir = self.tmpdir_context_manager.__enter__()
