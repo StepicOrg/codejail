@@ -44,10 +44,14 @@ def unite_limits(limit1, limit2):
 
 
 class Command(object):
-    def __init__(self, name, argv, limits):
+    def __init__(self, name, argv, limits, env):
         self.name = name
         self.argv = argv
         self.limits = limits
+        self.env = env
+
+    def __repr__(self):
+        return "<Command {}: {}>".format(self.name, ' '.join(self.argv))
 
 # Configure the commands
 
@@ -56,7 +60,7 @@ class Command(object):
 COMMANDS = {}
 
 
-def configure(command, bin_path, user=None, extra_args=None, limits=None):
+def configure(command, bin_path, user=None, extra_args=None, limits=None, env=None):
     """
     Configure a command for `jail_code` to use.
 
@@ -84,7 +88,7 @@ def configure(command, bin_path, user=None, extra_args=None, limits=None):
     cmd_argv.append(bin_path)
     cmd_argv.extend(extra_args)
 
-    COMMANDS[command] = Command(command, cmd_argv, limits)
+    COMMANDS[command] = Command(command, cmd_argv, limits, env)
 
 
 def is_configured(command):
@@ -126,7 +130,7 @@ class Jail(object):
         self.tmpdir_context_manager.__exit__(exc_type, exc_val, exc_tb)
 
     def run_code(self, command, code=None, files=None, command_argv=None, argv=None, stdin=None,
-                 slug=None, env=None, limits=None):
+                 slug=None, limits=None):
         """
         Run code in a jailed subprocess.
 
@@ -161,7 +165,6 @@ class Jail(object):
         files = files or []
         command_argv = command_argv or []
         argv = argv or []
-        env = env or {}
         if isinstance(stdin, str):
             stdin = stdin.encode()
 
@@ -198,7 +201,7 @@ class Jail(object):
 
         cmd = command.argv + command_argv + argv
         popen_kwargs = dict(cwd=self.tmpdir,
-                            env=env,
+                            env=command.env,
                             stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
@@ -243,10 +246,10 @@ class Jail(object):
 
 
 def jail_code(command, code=None, files=None, command_argv=None, argv=None, stdin=None,
-              slug=None, env=None, limits=None):
+              slug=None, limits=None):
     with Jail() as jail:
         return jail.run_code(command, code, files, command_argv, argv, stdin,
-                             slug, env, limits)
+                             slug, limits)
 
 
 class ProcessKillerThread(threading.Thread):

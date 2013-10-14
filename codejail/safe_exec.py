@@ -136,7 +136,7 @@ def safe_exec(code, globals_dict, files=None, python_path=None, slug=None, env=N
         log.debug("Stdin: %s", stdin)
 
     res = jail_code.jail_code(
-        "python", code=jailed_code, stdin=stdin, files=files, slug=slug, env=env
+        "python", code=jailed_code, stdin=stdin, files=files, slug=slug
     )
     if res.status != 0:
         raise SafeExecException(
