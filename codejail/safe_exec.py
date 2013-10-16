@@ -38,7 +38,7 @@ class SafeExecException(Exception):
     pass
 
 
-def safe_exec(code, globals_dict, files=None, python_path=None, slug=None, env=None):
+def safe_exec(code, globals_dict, files=None, python_path=None, slug=None):
     """
     Execute code as "exec" does, but safely.
 
