@@ -15,4 +15,4 @@ htmlcov
 *.DS_Store
 
 
-Varantfile
+.vagrant

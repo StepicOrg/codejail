@@ -9,7 +9,9 @@ import unittest
 
 from nose.plugins.skip import SkipTest
 
-from codejail.jail_code import jail_code, is_configured, Jail, configure
+from codejail.jail_code import jail_code, is_configured, Jail, configure, auto_configure
+
+auto_configure()
 
 
 def jailpy(code=None, *args, **kwargs):
@@ -121,8 +123,9 @@ class TestFeatures(JailCodeHelpers):
                 print(f.read())
         """)
 
-        limits = {"FORK": True, "FSIZE": 256}
-        configure("unconfined_python", sys.prefix + "/bin/python", limits=limits)
+        limits = {"TIME": 1, "MEMORY": 128*1024*1024,
+                  "CAN_FORK": True, "FILE_SIZE": 256}
+        configure("unconfined_python", sys.prefix + "/bin/python", limits_conf=limits)
         with Jail() as j:
             res = j.run_code("unconfined_python", first)
             self.assertEqual(res.status, 0)
@@ -136,19 +139,19 @@ class TestLimits(JailCodeHelpers):
 
     def test_cant_use_too_much_memory(self):
         # This will fail after setting the limit to 30Mb.
-        res = jailpy(code="print(len(bytearray(50000000)))", limits={'VMEM': 30000000})
+        res = jailpy(code="print(len(bytearray(50000000)))", limits={'MEMORY': 30000000})
         self.assertEqual(res.stdout, "")
         self.assertNotEqual(res.status, 0)
 
     def test_changing_vmem_limit(self):
         # Up the limit, it will succeed.
-        res = jailpy(code="print(len(bytearray(50000000)))", limits={'VMEM': 80000000})
+        res = jailpy(code="print(len(bytearray(50000000)))", limits={'MEMORY': 80000000})
         self.assertEqual(res.stdout, "50000000\n")
         self.assertEqual(res.status, 0)
 
     def test_disabling_vmem_limit(self):
         # Disable the limit, it will succeed.
-        res = jailpy(code="print(len(bytearray(50000000)))", limits={'VMEM': 0})
+        res = jailpy(code="print(len(bytearray(50000000)))", limits={'MEMORY': None})
         self.assertEqual(res.stdout, "50000000\n")
         self.assertEqual(res.status, 0)
 
@@ -164,7 +167,7 @@ class TestLimits(JailCodeHelpers):
         self.assertEqual(res.stdout, "")
 
     def test_changing_realtime_limit(self):
-        res = jailpy(code="import time; time.sleep(1.5); print('Done!')", limits={'REALTIME': 1})
+        res = jailpy(code="import time; time.sleep(1.5); print('Done!')", limits={'TIME': 1})
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "")
 

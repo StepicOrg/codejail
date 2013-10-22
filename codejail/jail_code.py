@@ -13,34 +13,77 @@ log = logging.getLogger(__name__)
 
 # TODO: limit too much stdout data?
 
-DEFAULT_LIMITS = {
-    # CPU seconds, defaulting to 1.
-    "CPU": 2,
-    # Real time, defaulting to 1 second.
-    "REALTIME": 2,
-    # Total process virutal memory, in bytes, defaulting to unlimited.
-    "VMEM": 0,
-    "FORK": 0,
-    "FSIZE": 0
+DEFAULT_CONFIG = {
+    # time in seconds, None for unlimited
+    "TIME": 2,
+    # memory in bytes, None for unlimited
+    "MEMORY": 128 * 1024 * 1024,
+    # allowed size of written files in bytes, None for unlimited
+    "FILE_SIZE": 0,
+    "CAN_FORK": False,
 }
 
 
-def unite_limits(limit1, limit2):
-    def extract(val):
-        return [l[val] for l in [limit1, limit2] if val in l]
-    cpus = extract('CPU')
-    realtimes = extract('REALTIME')
-    vmems = extract('VMEM')
-    forks = extract('FORK')
-    fsizes = extract('FSIZE')
-    new_limits = {
-        'CPU': min(cpus),
-        'REALTIME': min(realtimes),
-        'VMEM': min(vmems) if 0 not in vmems else max(vmems),
-        'FORK': min(forks),
-        'FSIZE': min(fsizes)
+class Limits(object):
+    UNLIMITED_CONFIG = {
+        "TIME": None,
+        "MEMORY": None,
+        "FILE_SIZE": None,
+        "CAN_FORK": True,
     }
-    return new_limits
+
+    def __init__(self, conf, partial=False):
+        if not partial:
+            assert len(conf) == 4, "wrong codejail config"
+            self.time = conf["TIME"]
+            self.memory = conf["MEMORY"]
+            self.can_fork = conf["CAN_FORK"]
+            self.file_size = conf["FILE_SIZE"]
+        else:
+            options = {"TIME", "MEMORY", "CAN_FORK", "FILE_SIZE"}
+            assert set(conf.keys()).issubset(options), "wrong codejail config"
+            for opt in options:
+                setattr(self, opt.lower(), conf.get(opt, self.UNLIMITED_CONFIG[opt]))
+
+    def __and__(self, other):
+        if other is None:
+            return self
+
+        if not isinstance(other, Limits):
+            raise TypeError
+
+        def maybe_min(attr):
+            values = [getattr(x, attr) for x in [self, other] if getattr(x, attr) is not None]
+            return min(values) if values else None
+
+        return Limits({
+            "TIME": maybe_min("time"),
+            "MEMORY": maybe_min("memory"),
+            "CAN_FORK": maybe_min("can_fork"),
+            "FILE_SIZE": maybe_min("file_size")
+        })
+
+    def __repr__(self):
+        return "<Limits time:{} mem:{} fsize:{} fork:{}>".format(self.time, self.memory,
+                                                                 self.file_size, self.can_fork)
+
+    def enforce(self):
+        import resource  # available only on Unix
+
+        def set_limit(limit, value):
+            resource.setrlimit(limit, (value, value))
+
+        if not self.can_fork:
+            set_limit(resource.RLIMIT_NPROC, 0)
+
+        if self.file_size is not None:
+            set_limit(resource.RLIMIT_FSIZE, self.file_size)
+
+        if self.time is not None:
+            set_limit(resource.RLIMIT_CPU, self.time)
+
+        if self.memory is not None:
+            set_limit(resource.RLIMIT_AS, self.memory)
 
 
 class Command(object):
@@ -60,7 +103,7 @@ class Command(object):
 COMMANDS = {}
 
 
-def configure(command, bin_path, user=None, extra_args=None, limits=None, env=None):
+def configure(command, bin_path, limits_conf, user=None, extra_args=None, env=None):
     """
     Configure a command for `jail_code` to use.
 
@@ -70,10 +113,7 @@ def configure(command, bin_path, user=None, extra_args=None, limits=None, env=No
 
     """
     extra_args = extra_args or []
-    limits = limits or {}
-    for k, v in DEFAULT_LIMITS.items():
-        if k not in limits:
-            limits[k] = v
+    limits = Limits(limits_conf)
     if "python" in command:
         # -E means ignore the environment variables PYTHON*
         # -B means don't try to write .pyc files.
@@ -101,11 +141,13 @@ def is_configured(command):
     """
     return command in COMMANDS
 
-# By default, look where our current Python is, and maybe there's a
-# python-sandbox alongside.  Only do this if running in a virtualenv.
-if hasattr(sys, 'real_prefix'):
-    if os.path.isdir(sys.prefix + "-sandbox"):
-        configure("python", sys.prefix + "-sandbox/bin/python", "sandbox")
+
+def auto_configure():
+    # By default, look where our current Python is, and maybe there's a
+    # python-sandbox alongside.  Only do this if running in a virtualenv.
+    if hasattr(sys, 'real_prefix'):
+        if os.path.isdir(sys.prefix + "-sandbox"):
+            configure("python", sys.prefix + "-sandbox/bin/python", DEFAULT_CONFIG, "sandbox")
 
 
 class JailResult(object):
@@ -172,22 +214,8 @@ class Jail(object):
         if not is_configured(command):
             raise Exception("jail_code needs to be configured for %r" % command)
         command = COMMANDS[command]
-        limits = unite_limits(command.limits, limits or {})
-
-        def set_process_limits():
-            import resource  # available only on Unix
-            if not limits["FORK"]:
-                resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
-            fsize = limits["FSIZE"]
-            resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
-            # CPU seconds, not wall clock time.
-            cpu = limits["CPU"]
-            if cpu:
-                resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
-            # Total process virtual memory.
-            vmem = limits["VMEM"]
-            if vmem:
-                resource.setrlimit(resource.RLIMIT_AS, (vmem, vmem))
+        limits = Limits(limits, partial=True) if limits else None
+        limits = command.limits & limits
 
         if slug:
             log.warning("Executing jailed code %s in %s", slug, self.tmpdir)
@@ -207,12 +235,12 @@ class Jail(object):
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             start_new_session=True,
-                            preexec_fn=set_process_limits)
+                            preexec_fn=limits.enforce)
         if sys.platform == "win32":
             popen_kwargs.update(preexec_fn=None,
                                 start_new_session=False)
+        result = self.do_popen(cmd, stdin, limits.time, popen_kwargs)
 
-        result = self.do_popen(cmd, stdin, limits["REALTIME"], popen_kwargs)
         return result
 
     @staticmethod
@@ -220,7 +248,7 @@ class Jail(object):
         subproc = subprocess.Popen(cmd, **popen_kwargs)
         # Start the time killer thread.
         killer = ProcessKillerThread(subproc, limit=time_limit)
-        if time_limit:
+        if time_limit is not None:
             killer.start()
         result = JailResult()
         result.stdout, result.stderr = subproc.communicate(stdin)

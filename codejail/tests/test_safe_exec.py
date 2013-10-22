@@ -6,6 +6,9 @@ import unittest
 from nose.plugins.skip import SkipTest
 
 from codejail import safe_exec
+from codejail.jail_code import auto_configure
+
+auto_configure()
 
 
 class SafeExecTests(unittest.TestCase):
