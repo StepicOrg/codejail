@@ -273,7 +273,7 @@ class Jail(object):
             else:
                 file_content, filename = element
                 dest = os.path.join(self.tmpdir, os.path.basename(filename))
-                with open(dest, 'w') as f:
+                with open(dest, 'w', encoding="utf-8") as f:
                     f.write(file_content)
 
 
