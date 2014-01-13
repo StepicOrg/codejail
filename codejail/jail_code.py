@@ -80,7 +80,9 @@ class Limits(object):
             set_limit(resource.RLIMIT_FSIZE, self.file_size)
 
         if self.time is not None:
-            set_limit(resource.RLIMIT_CPU, self.time)
+            # time limit is enforced by killer thread so
+            # increase it here to be killed with nice message
+            set_limit(resource.RLIMIT_CPU, self.time + 1)
 
         if self.memory is not None:
             set_limit(resource.RLIMIT_AS, self.memory)
