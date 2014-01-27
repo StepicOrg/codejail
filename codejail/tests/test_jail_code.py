@@ -159,22 +159,14 @@ class TestLimits(JailCodeHelpers):
         res = jailpy(code="print(sum(range(10**9)))")
         self.assertEqual(res.stdout, "")
         self.assertNotEqual(res.status, 0)
+        self.assertTrue(res.time_limit_exceeded)
 
     def test_cant_use_too_much_time(self):
-        # Default time limit is 1 second.  Sleep for 2.5 seconds.
-        res = jailpy(code="import time; time.sleep(2.5); print('Done!')")
+        # time limit is 5 * cpu_time
+        res = jailpy(code="import time; time.sleep(7); print('Done!')", limits={'TIME': 1})
         self.assertNotEqual(res.status, 0)
         self.assertEqual(res.stdout, "")
-
-    def test_changing_realtime_limit(self):
-        res = jailpy(code="import time; time.sleep(1.5); print('Done!')", limits={'TIME': 1})
-        self.assertNotEqual(res.status, 0)
-        self.assertEqual(res.stdout, "")
-
-    def test_disabling_realtime_limit(self):
-        res = jailpy(code="import time; time.sleep(1.5); print('Done!')")
-        self.assertResultOk(res)
-        self.assertEqual(res.stdout, "Done!\n")
+        self.assertTrue(res.time_limit_exceeded)
 
     def test_cant_write_files(self):
         res = jailpy(code="""\

@@ -80,9 +80,7 @@ class Limits(object):
             set_limit(resource.RLIMIT_FSIZE, self.file_size)
 
         if self.time is not None:
-            # time limit is enforced by killer thread so
-            # increase it here to be killed with nice message
-            set_limit(resource.RLIMIT_CPU, self.time + 1)
+            set_limit(resource.RLIMIT_CPU, self.time)
 
         if self.memory is not None:
             set_limit(resource.RLIMIT_AS, self.memory)
@@ -248,15 +246,15 @@ class Jail(object):
     @staticmethod
     def do_popen(cmd, stdin, time_limit, popen_kwargs):
         subproc = subprocess.Popen(cmd, **popen_kwargs)
-        # Start the time killer thread.
-        killer = ProcessKillerThread(subproc, limit=time_limit)
         if time_limit is not None:
+            # Start the wall clock time killer thread and be permissive
+            # about it
+            killer = ProcessKillerThread(subproc, limit=time_limit * 5)
             killer.start()
         result = JailResult()
         result.stdout, result.stderr = subproc.communicate(stdin)
         result.status = subproc.returncode
-        if killer.killed:
-            result.status = -1
+        if result.status != 0 and os.WIFSIGNALED(result.status):
             result.time_limit_exceeded = True
 
         return result
@@ -295,7 +293,6 @@ class ProcessKillerThread(threading.Thread):
         super(ProcessKillerThread, self).__init__()
         self.subproc = subproc
         self.limit = limit
-        self.killed = False
 
     def run(self):
         start = time.time()
@@ -312,5 +309,4 @@ class ProcessKillerThread(threading.Thread):
                 "Killing process %r (group %r), ran too long: %.1fs",
                 self.subproc.pid, pgid, time.time() - start
             )
-            self.killed = True
             subprocess.call(["sudo", "pkill", "-9", "-g", str(pgid)])
