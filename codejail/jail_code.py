@@ -1,6 +1,7 @@
 """Run code in a jail."""
 import logging
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -254,7 +255,12 @@ class Jail(object):
         result = JailResult()
         result.stdout, result.stderr = subproc.communicate(stdin)
         result.status = subproc.returncode
-        if result.status != 0 and os.WIFSIGNALED(result.status):
+
+        def is_killed_by_sigkill(status):
+            return 'sudo' in cmd and status == 128 + signal.SIGKILL or status == -signal.SIGKILL
+
+        if is_killed_by_sigkill(result.status):
+            # violating either wall clock or cpu limit results in SIGKILL"
             result.time_limit_exceeded = True
 
         return result
