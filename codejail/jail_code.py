@@ -256,11 +256,12 @@ class Jail(object):
         result.stdout, result.stderr = subproc.communicate(stdin)
         result.status = subproc.returncode
 
-        def is_killed_by_sigkill(status):
-            return 'sudo' in cmd and status == 128 + signal.SIGKILL or status == -signal.SIGKILL
+        def is_killed_by_sigkill_or_sigxcpu(status):
+            signals = [signal.SIGKILL, signal.SIGXCPU]
+            return ('sudo' in cmd and status - 128 in signals) or -status in signals
 
-        if is_killed_by_sigkill(result.status):
-            # violating either wall clock or cpu limit results in SIGKILL"
+        if is_killed_by_sigkill_or_sigxcpu(result.status):
+            # violating either wall clock or cpu limit results in SIGKILL or SIGXCPU"
             result.time_limit_exceeded = True
 
         return result
