@@ -23,6 +23,7 @@ DEFAULT_CONFIG = {
     "FILE_SIZE": 0,
     "CAN_FORK": False,
 }
+OUTPUT_MAXSIZE = 64 * 1024 * 1024  # 64MB
 
 
 class Limits(object):
@@ -253,7 +254,8 @@ class Jail(object):
             killer = ProcessKillerThread(subproc, limit=time_limit * 5)
             killer.start()
         result = JailResult()
-        result.stdout, result.stderr = subproc.communicate(stdin)
+        result.stdout, result.stderr = util.subprocess_communicate(
+            subproc, stdin, output_maxsize=OUTPUT_MAXSIZE)
         result.status = subproc.returncode
 
         def is_killed_by_sigkill_or_sigxcpu(status):
@@ -263,6 +265,8 @@ class Jail(object):
         if is_killed_by_sigkill_or_sigxcpu(result.status):
             # violating either wall clock or cpu limit results in SIGKILL or SIGXCPU"
             result.time_limit_exceeded = True
+
+        result.output_truncated = subproc.output_truncated
 
         return result
 
