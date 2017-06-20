@@ -1,6 +1,7 @@
 """Helpers for codejail."""
 
 import contextlib
+import logging
 import os
 import select
 import selectors
@@ -9,19 +10,33 @@ import subprocess
 import tempfile
 
 
+logger = logging.getLogger(__name__)
+
+
 @contextlib.contextmanager
-def temp_directory(tmp_root=None):
+def temp_directory(tmp_root=None, cleanup_executable=None):
     """
     A context manager to make and use a temp directory.
     The directory will be removed when done.
     """
     temp_dir = tempfile.mkdtemp(prefix="codejail-", dir=tmp_root)
-    # Make directory readable by other users ('sandbox' user needs to be
-    # able to read it).
-    os.chmod(temp_dir, 0o775)
+    # Make directory readable and writable by other users ('sandbox' user
+    # needs to be able to read and write it).
+    os.chmod(temp_dir, 0o777)
     try:
         yield temp_dir
     finally:
+        if cleanup_executable:
+            # Cleaning up all files in the sandbox directory. They may be owned
+            # by sandbox user and have arbitrary permissions, so use sudo with
+            # a special cleanup script.
+            p = subprocess.Popen(['sudo', cleanup_executable, temp_dir],
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+            cleanup_stdout, _ =  p.communicate(timeout=60)
+            if p.returncode:
+                logger.error("Failed to cleanup the working directory: %s",
+                             cleanup_stdout.decode(errors='replace'))
         # if this errors, something is genuinely wrong, so don't ignore errors.
         shutil.rmtree(temp_dir)
 
