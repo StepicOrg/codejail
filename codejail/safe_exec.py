@@ -84,6 +84,10 @@ def safe_exec(code, globals_dict, files=None, python_path=None, slug=None, limit
         class DevNull(object):
             def write(self, *args, **kwargs):
                 pass
+
+            def flush(self):
+                pass
+
         sys.stdout = DevNull()
         """
         # Read the code and the globals from the stdin.
