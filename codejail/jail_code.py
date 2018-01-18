@@ -224,7 +224,7 @@ class Jail(object):
             log.warning("Executing jailed code %s in %s", slug, self.tmpdir)
 
         # Create the main file.
-        if code:
+        if code is not None:
             files.append((code, "jailed_code"))
             command_argv = command_argv + ["jailed_code"]
 
